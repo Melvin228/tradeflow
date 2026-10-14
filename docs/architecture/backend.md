@@ -74,6 +74,22 @@ Responsibilities:
 
 Avoid generic top-level packages such as one global `controller`, `service`, and `repository` package. Feature-based organization keeps related code together and makes future module extraction easier.
 
+Within a feature, keep related HTTP boundary types together in that feature's `api` package while it remains navigable. For example:
+
+```text
+user/
+└── api/
+    ├── UserController.java
+    ├── RegisterUserRequest.java
+    ├── UserResponse.java
+    ├── UserApiRoutes.java
+    └── UserApiExceptionHandler.java
+```
+
+It is acceptable for a controller, its request/response records, route constants, and feature-specific exception mapping to share this package. Do not create `request`, `response`, and `controller` subpackages solely to give each type category its own folder. If a feature's API grows enough that the package becomes difficult to navigate, split it along actual endpoint or subfeature boundaries while keeping ownership clear.
+
+Put cross-feature HTTP concerns, such as a global exception handler or shared API error model, in `common.api`. Keep feature-specific errors and their HTTP translation with the owning feature unless the mapping is intentionally uniform across the application. Do not put all feature controllers or DTOs into a single global `api` package.
+
 ## 5. Request Flow
 
 ```text
@@ -149,6 +165,29 @@ Guidelines:
 - Do not mix several concurrency models without a specific reason.
 
 Virtual threads do not remove the need to understand race conditions, transactions, locks, atomicity, idempotency, or backpressure.
+
+### 7.4 Constants and Repeated Values
+
+Use a named constant when a value is reused and has one stable meaning, or when naming a domain rule makes its purpose clearer. Prefer method-local variables for intermediate values, a `private static final` field for constants reused within one class, and a feature-scoped type only when multiple classes genuinely share the same rule.
+
+Guidelines:
+
+- Use descriptive `UPPER_SNAKE_CASE` names for Java constants.
+- Do not create a catch-all `Constants` class or promote every literal into a constant. Equal values are not necessarily the same concept; share a constant only when the meaning and change policy are shared.
+- Name non-obvious domain limits, units, or algorithm identifiers. Keep obvious one-off values inline when a name would add indirection without clarifying intent.
+- Use enums for a closed set of domain choices and configuration properties for environment-specific or operationally tunable values. Do not hard-code secrets or deployment settings as constants.
+- Keep constants immutable and scoped to their owning feature. Avoid public constants as an alternative to a clear module API.
+- Values used in annotation attributes must be compile-time constants. If an API validation limit and a domain/persistence rule are intentionally the same rule, place the shared compile-time constant in an appropriately scoped feature type.
+- Treat SQL migrations as the schema source of truth. Java constants cannot be shared with migration scripts, so keep corresponding schema limits and named constraints aligned deliberately and cover important drift with database integration tests. Never rewrite an already-applied migration just to change a constant.
+- In tests, name repeated fixtures when it improves readability, but keep scenario-specific values close to the assertion that explains them.
+
+Examples from the current codebase:
+
+- `UserApiRoutes.BASE` is appropriately scoped and reused by the request mapping and security rule. `AuthApiRoutes` keeps authentication route paths together for the endpoints that will use them.
+- The email maximum (`320`) and display-name maximum (`120`) are repeated in request validation and `UserEntity` persistence/validation. These are candidates for feature-scoped shared compile-time constants if they are intended to remain one rule. The password-hash storage maximum (`255`) is also repeated in persistence mapping and validation, while the `128` password-input maximum constrains a different value and must stay separate.
+- `uk_app_user_email` is named in both the registration service and the user-table migration. Keep the Java constant for application-side recognition, and retain the matching database name in the migration; there is no shared constant across Java and SQL.
+- The `pbkdf2` encoder identifier appears in the password-encoder configuration more than once. A private constant there can keep the map key and encoder id together if that identifier changes.
+- `NUMERIC(19,4)` and `NUMERIC(19,8)` recur across migrations as monetary and quantity schema policies. Keep their use intentional and consistent with the documented domain precision; SQL DDL has no shared Java constant to reference.
 
 ## 8. Spring Boot Practices
 
@@ -388,31 +427,102 @@ GET  /api/v1/orders/{orderId}
 
 ## 15. Testing Strategy
 
-### Unit Tests
+Testing is part of implementation, not a final phase. Add or update tests alongside each behavior so failures are caught close to the change. Prefer a small number of fast, focused tests at lower levels and a smaller number of high-value tests that exercise Spring and PostgreSQL together.
 
-Use unit tests for:
+### 15.1 Test Levels
 
-- Domain calculations
-- Order validation
-- Cash and position rules
-- Mapping and small application-service behavior
+#### Unit tests
 
-### Integration Tests
+A unit test exercises one class or small piece of business behavior without starting Spring or connecting to a database. These should be the fastest and most numerous tests.
 
-Use PostgreSQL through Testcontainers for:
+Use them for:
 
-- Repository queries
-- Flyway migrations
-- Transaction rollback
-- Unique constraints
-- Optimistic locking
-- End-to-end API behavior
+- Domain calculations and state transitions
+- Order validation and cash/position rules
+- Input normalization and mapping
+- Application-service decisions when collaborators can be replaced by simple test doubles
 
-Do not rely on H2 as proof that PostgreSQL-specific schema, locking, or queries work correctly.
+Construct the class directly and provide controlled collaborators. Use JUnit assertions; use Mockito only when a collaborator's behavior needs to be controlled or verified. Do not mock simple value objects or the class under test, and do not mock repositories to claim that a database query or constraint works.
 
-### Concurrency Tests
+#### Slice tests
 
-Concurrency tests must coordinate task start using tools such as `CountDownLatch`, then assert business invariants rather than depending on timing alone.
+A slice test starts only a focused part of Spring, which gives useful framework integration without loading the entire application:
+
+- `@WebMvcTest` for controller routing, JSON serialization, request validation, and HTTP error responses. Mock the application service at this boundary.
+- `@DataJpaTest` for entity mappings and repository behavior. Configure it to use PostgreSQL through Testcontainers when verifying PostgreSQL-specific behavior; an embedded database is not an equivalent substitute.
+
+Use slices when they provide a clear benefit over a direct unit test or a full integration test. They still start Spring and are slower than unit tests.
+
+#### Integration tests
+
+An integration test verifies that important application components work together, commonly including Spring configuration, application services, repositories, transactions, and the real database engine. Use PostgreSQL through Testcontainers for:
+
+- Repository queries and entity mappings
+- Flyway migrations and Hibernate schema validation
+- Transaction commit and rollback behavior
+- Unique, foreign-key, check, and other database constraints
+- Optimistic locking and idempotency
+- Important use cases that span multiple features
+
+Testcontainers starts a disposable PostgreSQL instance for the test run. Tests should use the same PostgreSQL major version as the project’s supported runtime where practical. Do not rely on H2 as proof that PostgreSQL-specific schema, locking, SQL, or queries work correctly.
+
+#### End-to-end tests
+
+An end-to-end test exercises a complete externally visible journey through the application boundary, usually an HTTP request through routing, security, business logic, and persistence. Keep this set small and focused on critical journeys—for example, registering a user, logging in, and making an authenticated request. A test that starts the Spring application and calls a repository directly is an integration test, not an end-to-end test.
+
+### 15.2 What to Test in TradeFlow
+
+Test observable behavior and business invariants rather than private methods or implementation details. Prioritize cases that could lose data, leak access, or violate financial rules:
+
+- User registration normalizes email, hashes the password, and rejects duplicate email addresses.
+- Login rejects invalid credentials without disclosing whether an account exists; protected requests enforce authentication and ownership.
+- Portfolio creation records its initial balance and ledger entry consistently.
+- Orders reject inactive or currency-mismatched instruments, insufficient cash, and insufficient holdings.
+- Successful buys and sells update the order, portfolio, position, trade, and ledger atomically.
+- Replaying an idempotency key does not execute the order twice; reusing it for a different request is rejected.
+- Constraints, transaction rollback, and concurrent updates preserve non-negative balances and positions.
+- API validation and error handling return the documented status and response shape without exposing internal details.
+
+For each behavior, cover the normal case, important boundary cases, and expected failures. Avoid asserting incidental implementation details such as private method calls, exact SQL formatting, or how many internal helper methods ran. A refactor that preserves behavior should not require rewriting the tests.
+
+### 15.3 Test Organization and Naming
+
+Mirror the production feature/package structure under `src/test/java`. Keep tests close to the feature they verify and make the test type apparent in the class name:
+
+```text
+src/test/java/com/melvin/tradeflow/
+├── user/
+│   ├── domain/UserRegistrationTest.java
+│   └── infrastructure/persistence/UserRepositoryTest.java
+├── order/
+│   ├── domain/OrderValidationTest.java
+│   └── application/OrderExecutionIntegrationTest.java
+└── support/
+    └── PostgreSqlTestConfiguration.java
+```
+
+Use descriptive names that state the scenario and outcome, for example:
+
+```text
+register_normalizesEmail_andStoresPasswordHash
+buyOrder_withInsufficientCash_isRejectedWithoutChangingBalances
+```
+
+Keep setup readable. Prefer small test builders or fixtures when they remove repeated, meaningful setup; avoid building a large test framework before repetition exists. Each test should arrange its own relevant state and not depend on the execution order or data left by another test.
+
+### 15.4 Reliability and Security
+
+- Make tests deterministic: control time, generated identifiers, and external responses where practical; do not use sleeps to coordinate work.
+- Give potentially blocking tests explicit timeouts and always release/shut down threads and resources.
+- Do not use production credentials, real customer data, live services, or real financial data in tests.
+- Never print passwords, raw tokens, or other secrets in test output.
+- Assert both the response and important persisted state for transactional use cases.
+- Keep database tests isolated and repeatable; use transactions or cleanup strategies deliberately, noting that tests involving multiple transactions or concurrency may not be safely isolated by a test-managed transaction.
+- Do not disable constraints or Flyway in a test to make a failing schema test pass.
+
+### 15.5 Concurrency Tests
+
+Concurrency tests must coordinate task start using tools such as `CountDownLatch`, then assert business invariants rather than depending on timing alone. Use separate transactions/connections where needed so the test exercises real database concurrency. Avoid sleeps and assumptions about which thread wins.
 
 Example scenario:
 
@@ -423,7 +533,41 @@ Expected: at most 10 successful executions
 Invariant: cash never becomes negative
 ```
 
-Tests must have timeouts so failures cannot hang the build indefinitely.
+Test the contract (successful operation count and final database state), not a particular thread schedule. Tests must have timeouts so failures cannot hang the build indefinitely.
+
+### 15.6 Development Feedback Loop
+
+For each backlog behavior:
+
+1. Identify the behavior and its important success, boundary, and failure cases.
+2. Add focused unit tests for business rules and calculations.
+3. Add slice or integration tests where Spring, persistence, security, or PostgreSQL behavior matters.
+4. Implement the behavior and run the smallest relevant test selection.
+5. Before sharing the change, run the complete test suite with the Maven Wrapper and review failures rather than weakening or deleting valid tests.
+
+From `backend/`, run:
+
+```text
+./mvnw test
+```
+
+On Windows, use:
+
+```text
+mvnw.cmd test
+```
+
+During development, Maven can run a single test class with `-Dtest=UserRegistrationTest test`. A passing unit-test run does not replace the PostgreSQL integration tests; ensure the CI/build environment runs the complete suite, including Testcontainers tests.
+
+### 15.7 Test-Driven Development
+
+Test-driven development (TDD) is an optional way to work, not a requirement for every change. In the red-green-refactor cycle:
+
+1. **Red:** write a failing test that describes one desired behavior.
+2. **Green:** make the smallest implementation change that passes it.
+3. **Refactor:** improve names and structure while keeping the test suite passing.
+
+TDD can be especially helpful for domain rules, validation, and tricky edge cases. For framework wiring or exploratory work, it is also reasonable to implement a small vertical slice and add tests immediately. In either workflow, tests should describe intended behavior and remain in the suite.
 
 ## 16. Observability and Operations
 
@@ -448,7 +592,7 @@ Tests must have timeouts so failures cannot hang the build indefinitely.
 
 ## 18. Security Baseline
 
-Authentication and authorization are outside the initial MVP, but the codebase must still:
+The MVP includes user registration and authentication using Spring Security. Store only adaptive password hashes, issue short-lived access tokens, and store only hashes of opaque refresh tokens. Protect portfolio and order operations with authenticated-user ownership checks. The codebase must also:
 
 - Validate all external input.
 - Use parameterized persistence APIs.
@@ -456,7 +600,7 @@ Authentication and authorization are outside the initial MVP, but the codebase m
 - Keep dependencies updated.
 - Keep secrets outside source control.
 - Run containers and deployed processes with minimal privileges.
-- Document future authorization boundaries around portfolios and orders.
+- Never log passwords, raw tokens, password hashes, or refresh-token hashes.
 
 ## 19. Build and Code Quality
 
@@ -489,7 +633,7 @@ The following decisions are intentionally deferred:
 - Optimistic versus pessimistic locking for every high-contention path
 - Extraction of modules into microservices
 - Caching technology
-- Authentication provider
+- External identity provider (authentication is handled by the application for the MVP)
 - Cloud hosting platform
 - Frontend architecture
 

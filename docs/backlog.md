@@ -10,16 +10,16 @@
 
 ## Milestone 2: Users and Authentication
 
-- TF-006 Create user and refresh-token schema
-- TF-007 Implement user registration with normalized email and adaptive password hashing
+- TF-006 Create userEntity and refresh-token schema
+- TF-007 Implement userEntity registration with normalized email and adaptive password hashing
 - TF-008 Implement login and issue access and refresh tokens
 - TF-009 Implement refresh-token rotation and logout
-- TF-010 Add authentication and user integration tests
+- TF-010 Add authentication and userEntity integration tests
 
 ## Milestone 3: Portfolio and Instruments
 
 - TF-011 Create portfolio schema
-- TF-012 Implement portfolio creation for the authenticated user
+- TF-012 Implement portfolio creation for the authenticated userEntity
 - TF-013 Implement ownership-scoped portfolio retrieval
 - TF-014 Create instrument schema
 - TF-015 Seed financial instruments

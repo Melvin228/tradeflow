@@ -1,7 +1,7 @@
 # TradeFlow
 
 TradeFlow is a simulated portfolio and trade-order processing platform with
-user accounts and authentication.
+userEntity accounts and authentication.
 
 The project demonstrates modular application design, secure credential
 handling, transaction management, concurrency control, and idempotent order
@@ -70,13 +70,28 @@ The first release will not include:
 - Spring Boot Actuator
 - OpenAPI
 
+## JWT Configuration
+
+The API signs access tokens with HS256. Before starting the backend, set
+`JWT_SECRET` to the Base64 encoding of at least 32 random bytes. For PowerShell:
+
+```powershell
+$bytes = [byte[]]::new(32)
+[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$env:JWT_SECRET = [Convert]::ToBase64String($bytes)
+```
+
+Tokens expire after 15 minutes by default. Set `JWT_ACCESS_TOKEN_TTL` to an ISO-8601
+duration (for example, `PT10M`) to change the lifetime. Keep the secret outside
+source control and use a securely managed value in deployed environments.
+
 ## Definition of Done
 
 Version 0.1 is complete when:
 
 - The application can start using Docker Compose.
-- A user can register, log in, refresh credentials and log out.
-- Users cannot access another user's portfolios or orders.
+- A userEntity can register, log in, refresh credentials and log out.
+- Users cannot access another userEntity's portfolios or orders.
 - A portfolio can be created.
 - Instruments can be listed.
 - Buy and sell orders can be submitted.

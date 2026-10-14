@@ -2,7 +2,7 @@
 
 ## UC-001: Create Portfolio
 
-A user creates a portfolio with a name and initial simulated cash balance.
+A userEntity creates a portfolio with a name and initial simulated cash balance.
 
 ### Acceptance Criteria for UC-001
 
@@ -13,7 +13,7 @@ A user creates a portfolio with a name and initial simulated cash balance.
 
 ## UC-002: View Instruments
 
-A user views the financial instruments available for simulated trading.
+A userEntity views the financial instruments available for simulated trading.
 
 ### Acceptance Criteria for UC-002
 
@@ -23,7 +23,7 @@ A user views the financial instruments available for simulated trading.
 
 ## UC-003: Submit Buy Order
 
-A user submits an order to purchase an instrument.
+A userEntity submits an order to purchase an instrument.
 
 ### Acceptance Criteria for UC-003
 
@@ -36,7 +36,7 @@ A user submits an order to purchase an instrument.
 
 ## UC-004: Submit Sell Order
 
-A user submits an order to sell an instrument.
+A userEntity submits an order to sell an instrument.
 
 ### Acceptance Criteria for UC-004
 
